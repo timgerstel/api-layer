@@ -79,6 +79,7 @@ zuul:
     ignoreSecurityHeaders: false
     includeDebugHeader: false
     sensitiveHeaders: Expires,Date
+    ignoredHeaders: Access-Control-Allow-Origin,Access-Control-Allow-Credentials
     ignoredPatterns:
         - /ws/**
     host:
