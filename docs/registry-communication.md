@@ -1,68 +1,56 @@
 # Communication between Client, Discovery service, and Gateway
 
-This document is a summary of knowledge gathered during the implementation of PassTickets, and includes how to 
-short-cut delays in registration process (implemented as side-effect).
+This document is a summary of the knowledge gathered during the implementation of PassTicket support. It includes an explanation of how to decrease delays in the registration process.
 
-## Client and discovery service (server)
+## Client and Discovery service
 
-To begin communication between the client and the Discovery service, the client should register with the discovery server. Minimum information requirements from the client to communicate to the server include the following:
+A client must register with the discovery server to begin communication. Minimum required information from a client:
 
 - **serviceId (or applicationId)**
 - **instanceId** 
-    - Ensure that the instanceId is unique. Typically this is concatenated from `serviceId`, `hostname`, and `port`. Note that `hostname` and `port` should be unique themselves.
-    - The structure of the instanceId is typically `${hostname}:${serviceId}:${port}`. The third part could also be a random number or string.
+    - Ensure that the instanceId is unique. 
+    - The structure of the instanceId is typically `${hostname}:${serviceId}:${port}`. The third part can be also a random number or string.
  - **health URL**
-    - The URL where the service responds with the status of client
-    - The discovery client can check this state but active registration occurs via heart beats.
- - **timeout about heartbeat**
-    - The client defines how often a heartbeat is sent and when it is time to unregister.
-    - The client's active registration with the Discovery service is maintained until a heartbeat is not delivered within the timeout setting or the client unregisters itself.  
+    - The URL where the service responds with the status of a client
+    - The discovery service can check this state but the state of registration is monitored through heartbeats.
+ - **timeout of a heartbeat**
+    - The client defines how often a heartbeat is sent and unregisters itself.
+    - The client's active registration with the Discovery service is maintained until a heartbeat is not delivered within the timeout period or the client unregisters itself.  
  - **service location information**
-    - Service location information is used for callback and includes `IP`, `hostname`, `port`, and `securePort` for HTTPS.
-    - `VipAddress` can be used and is usually the same as the `serviceId`.
+    - Service location information is used for callback and includes `IP`, `hostname`, `port` for HTTP, or `securePort` for HTTPS.
+    - `VipAddress` must be used and it is the same as the `serviceId`.
  - **information about environment (shortly AWS or own)**
  - **status**
-    - In the registration it replaces the first heartbeat
+    - In the registration, it replaces the first heartbeat
  - **other information** (Optional)
     - Other parameters can be included, but do not affect communication.
     - Customized data outside of the scope of Eureka can be stored in the metadata.
-    - Note: Metadata aren't data for one time use, and can changed after registration. However, a REST method can be used to update these metadata. Other data cannot be changed after registration
+    - Note: Metadata isn't data for one-time use, and can be changed after registration. However, a REST method can be used to update these metadata. Other data cannot be changed after registration
 
-After registration, the client sends a heartbeat. Heart beat renews (extends) registration on discovery server. Missing heart beat longer than timeout will unregister service automatically.
+After registration, the client sends a heartbeat. Heartbeat renews (extends) registration with the Discovery Server. When it is not sent during the timeout period, the client is unregistered.
 
-The client can drop communication by unregistering with the Discovery service. Unregistering the client simply speeds up the process of client removal. 
-Without the unregistration call, the Discovery service waits for the heartbeat to time out. 
-Note: This timeout is longer than the interval of the renewal of client registration via the heartbest.
+The client can drop communication by unregistering with the Discovery service. Unregistering the client speeds up the process of client removal. Without this call, the Discovery service waits for the heartbeat to time out. 
+Note: This timeout is longer than the interval of the renewal of client registration through a heartbeat.
 
-Typically, all communication is covered with caches. As such, a client cannot be used immediately
-after registration. Caching occurs in many places for the system as a whole and it takes time to go through all of them. 
-Typically, there is a thread pool whereby one thread periodically updates caches. All of caches are independent and do not affect other caches.  
+Typically, all communication is cached. As such, a client cannot be used immediately after registration. Caching occurs in many places of the system and it takes some time to go through all of them. 
+Typically, there is a thread pool whereby one thread periodically updates caches. All caches are independent and do not affect other caches.  
 
-## Caches
+## Caching
 
-The following section describes all of the caches. The main idea is to shortcut
-the process of registration and unregistration to allow the use of caches on the Gateway side. As such, the race condition between
-different settings in discovery services and gateways is avoided. Descriptions of cache also include a link to the solution describing how it is solved.
+The following section describes the usage of all caches. The main idea is to speed up the process of registration and deregistration. The description of the cache also includes a link to the solution.
 
-### Discovery service & ResponseCache
+###  ResponseCache in Discovery service
 
-`ResponseCache` is implemented on the Discovery service. This cache is responsible for minimizing the call's overhead of
-registered instances. If any application calls the Discovery service, initially the cache is used or a record is created for subsequent calls.
+`ResponseCache` is implemented in the Discovery service. This cache is responsible for minimizing the call overhead of registered instances. When any application calls the Discovery service, initially the cache is used and a record is created for subsequent calls.
 
-The default for this cache contains two spaces: `read` and `readWrite`. Other application look in `read`. If the
-record is missing, it looks in `readWrite` or recreates a record. `Read` cache is updated by an internal thread which 
-periodically compares records in both spaces (on references level, null including).
+The default for this cache contains two spaces: `read` and `readWrite`. Application checks `read` and `readWrite`  whether the record is missing and recreates a record in that case. `Read` cache is updated by an internal thread which periodically compares records in both spaces (on references level, null including).
 
-<font color = "red"> If values are different thread copies records from `readWrite` into `read` space. </font>
+When values are different, records are copied from `readWrite` into `read` space.
 
-The two spaces was evidently created for NetFlix purposes and was changed with pull 
-request https://github.com/Netflix/eureka/pull/544. This improvement allows configuration to use only 
-`readWrite` space, `read` will be ignored and the user looks directly to `readWrite`.
+The two spaces are evidently created for NetFlix purposes and are changed with pull request https://github.com/Netflix/eureka/pull/544. This improvement allows configuration to use only `readWrite` space, `read` will be ignored and the user looks directly to `readWrite`.
 
-In default setting (read cache is on), Discovery service evicts on registration and unregistration records about service, delta and full registry only in `readWrite` space. 
-`Read` still contains old record until refresh thread will be done).
-Disable `read` cache allows to read directly from `readWrite`. It remove delay here.
- <font color = "red"> This description needs to be refactored to improve clarity.</font>
+In default setting (when `read` cache is on), Discovery service evicts on registration and deregistration records about service, delta, and full registry only in `readWrite` space. `read` still contains old record until refresh thread is done.
+Disabling `read` cache allows reading directly from `readWrite`. It removes delay there.
 
 ```
 eureka:
@@ -70,52 +58,35 @@ eureka:
         useReadOnlyResponseCache: false
 ```
 
-### Gateway & Discovery client
+###  Discovery client in Gateway
 
-On the Gateways site there is a discovery client which supports queries about services and instances on the gateway side. It will
-cache all information from the discovery service and serve the old cached data.
-Data are updated with thread asynchronously. From time to time fetch new registries so you can use them. 
-Updating can be performed either as delta, or full.
+The Gateway contains a discovery client that supports queries about services and instances. It caches all the information from the Discovery service. Data are updated with thread asynchronously. It periodically fetches new registries. They are updated either as delta, or full.
 
-The full update fetch is the initial fetch as it is necessary to download all required information. After that it is rarely used due to performance. 
-The Gateway could call the full update, but it happens only if data are not correct to fix them. One possible reason could be the long delay between fetching.
+The full update fetch is the initial one as it is necessary to download all required information. After that, it is rarely used due to performance. 
+The Gateway can call the full update, but it happens only if data are not correct to fix them. One possible reason could be a long delay between fetching.
 
-Delta fetching load just part of registry - the last changes. Delta is not related to specific Gateway, it doesn't return differences since last call. 
-Discovery service collects changes in registry (client registration and
-cancellation) and store them into queue. This queue is served to Gateways. They detect what is new and update its own registry copy (one gateway can get the same information many times).
-The queue on discovery service contains information about changes for a period (as default it is 180s). Queue is periodically cleaned by separated thread (other asynchronous task). 
-Cleaning remove all information about changes older then configuration.
-For easy detection of new updates by gateway there is a mechanism to store version to each update (incrementing number).
-
-<font color = "red"> Different what? </font>
-<font color = "red"> delta what? </font>
-<font color = "red"> This description needs to be refactored for clarity.</font>
-<font color = "red"> What is a "separed"  thread?.</font>
-<font color = "red"> This description needs to be rewritten to make it comprehensible.</font> 
-
+Delta fetching loads just part of registry - the last updates. Delta is not related to specific Gateway, it doesn't return differences since the last call. The Discovery service collects updates in the registry (client registration and cancellation) and stores them into a queue. This queue is sent to Gateways. They detect what is new and update its own registry (one gateway can get the same information many times). The queue on the Discovery service contains information about changes for a while (the default is 180s). The queue is periodically cleaned by a different thread (another asynchronous task). This removes all information about changes older then configuration. For easy detection of new updates by Gateway, there is a mechanism to store version to each update (incrementing number).
 
 **solution**
 
-This cache was minimized by allowing run asynchronous fetching at any time. The following classes are used:
+This cache was minimized by allowing running asynchronous fetching at any time. The following classes are used:
 
 - **ApimlDiscoveryClient**
     - custom implementation of discovery client
-    - via reflection it takes reference to thread pool responsible for fetching of registry
-    - contains method ```public void fetchRegistry()```, which add new asynchronous command to fetch registry
+    - by reflection, it takes a reference to thread pool responsible for fetching of registry
+    - contains method ```public void fetchRegistry()```, which adds the new asynchronous command to fetch registry
  - **DiscoveryClientConfig**
     - configuration bean to construct custom discovery client
     - `DiscoveryClient` also support event, especially `CacheRefreshedEvent` after fetching
-        - it is used to notify other bean to evict caches (route locators, ZUUL handle mapping, `CacheNotifier`)
+        - it is used to notify another bean to evict caches (route locators, ZUUL handle mapping, `CacheNotifier`)
  - **ServiceCacheController**
     - The controller to accept information about service changes (ie. new instance, removed instance)
     - This controller asks `ApimlDiscoveryClient` to fetch (it makes a delta and sends an event)
     - After this call, the process is asynchronous and cannot be directly checked (only by events).
     
-### Gateway & Route locators
+###  Route locators in Gateway
 
-The gateway includes the bean `ApimlRouteLocator`. This bean is responsible for collecting the client's routes. It indicates that information 
-is available about the path and services. This information is required to map the URI to a service. The most important is
-the filter `PreDecorationFilter`. It calls the method ```Route getMatchingRoute(String path)``` on the locator to translate the URI into
+The gateway includes the bean `ApimlRouteLocator`. This bean is responsible for collecting the client's routes. It indicates that information is available about the path and services. This information is required to map the URI to a service. The most important is the filter `PreDecorationFilter`. It calls the method ```Route getMatchingRoute(String path)``` on the locator to translate the URI into
 information about the service. A filter then stores information about (ie. `serviceId`) into the ZUUL context. 
 
 In our implementation we use a custom locator, which adds information about static routing. There is possible to have multiple locators. All of them 
@@ -236,4 +207,3 @@ From user point of view after ZUUL handler mapping exists Ribbon load balancer c
 ```
 There is possible to use REST API, described at https://github.com/Netflix/eureka/wiki/Eureka-REST-operations.
 ``` 
- 
