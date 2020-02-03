@@ -4,14 +4,14 @@ This document is a summary of the knowledge gathered during the implementation o
 
 ## Client and Discovery service
 
-A client must register with the discovery server to begin communication. Minimum required information from a client:
+A client must register with the discovery server to begin communication. The following list presents the minimum required information that a client must provide:
 
 - **serviceId (or applicationId)**
 - **instanceId** 
     - Ensure that the instanceId is unique. 
     - The structure of the instanceId is typically `${hostname}:${serviceId}:${port}`. The third part can be also a random number or string.
  - **health URL**
-    - The URL where the service responds with the status of a client
+    - The URL where the service responds with the status of the client
     - The discovery service can check this state but the state of registration is monitored through heartbeats.
  - **timeout of a heartbeat**
     - The client defines how often a heartbeat is sent and unregisters itself.
@@ -25,14 +25,14 @@ A client must register with the discovery server to begin communication. Minimum
  - **other information** (Optional)
     - Other parameters can be included, but do not affect communication.
     - Customized data outside of the scope of Eureka can be stored in the metadata.
-    - Note: Metadata isn't data for one-time use, and can be changed after registration. However, a REST method can be used to update these metadata. Other data cannot be changed after registration
+    - Note: Metadata is not data for one-time use. Matadata can be changed after registration. However, a REST method can be used to update these metadata. Other data cannot be changed after registration.
 
-After registration, the client sends a heartbeat. Heartbeat renews (extends) registration with the Discovery Server. When it is not sent during the timeout period, the client is unregistered.
+After registration, the client sends a heartbeat to the Discovery service. The heartbeat renews (extends) registration with the Discovery Server. When this heartbeat is not sent during the timeout period, the client is unregistered.
 
 The client can drop communication by unregistering with the Discovery service. Unregistering the client speeds up the process of client removal. Without this call, the Discovery service waits for the heartbeat to time out. 
 Note: This timeout is longer than the interval of the renewal of client registration through a heartbeat.
 
-Typically, all communication is cached. As such, a client cannot be used immediately after registration. Caching occurs in many places of the system and it takes some time to go through all of them. 
+Typically, all communication is cached. As such, a client cannot be used immediately after registration. Caching occurs throughout the system so it takes some time to go through all service components. 
 Typically, there is a thread pool whereby one thread periodically updates caches. All caches are independent and do not affect other caches.  
 
 ## Caching
@@ -43,14 +43,19 @@ The following section describes the usage of all caches. The main idea is to spe
 
 `ResponseCache` is implemented in the Discovery service. This cache is responsible for minimizing the call overhead of registered instances. When any application calls the Discovery service, initially the cache is used and a record is created for subsequent calls.
 
-The default for this cache contains two spaces: `read` and `readWrite`. Application checks `read` and `readWrite`  whether the record is missing and recreates a record in that case. `Read` cache is updated by an internal thread which periodically compares records in both spaces (on references level, null including).
+The default for this cache contains two spaces: `read` and `readWrite`. Application checks `read` and `readWrite`  whether the record is missing and, in the case that the record is missing, recreates a record. `Read` cache is updated by an internal thread which periodically compares records in both spaces (on references level, null including).
 
 When values are different, records are copied from `readWrite` into `read` space.
 
 The two spaces are evidently created for NetFlix purposes and are changed with pull request https://github.com/Netflix/eureka/pull/544. This improvement allows configuration to use only `readWrite` space, `read` will be ignored and the user looks directly to `readWrite`.
 
-In default setting (when `read` cache is on), Discovery service evicts on registration and deregistration records about service, delta, and full registry only in `readWrite` space. `read` still contains old record until refresh thread is done.
+In the default setting (when `read` cache is on), Discovery service evicts records about service, delta, and full registry only in `readWrite` space on registration and deregistration. `read` still contains old records until the refresh thread is done.
 Disabling `read` cache allows reading directly from `readWrite`. It removes delay there.
+
+<font color = "red"> CHECK THIS STATEMENT FOR ACCURACY:
+
+
+The following code disables the `read` cache: </font>
 
 ```
 eureka:
@@ -60,24 +65,29 @@ eureka:
 
 ###  Discovery client in Gateway
 
-The Gateway contains a discovery client that supports queries about services and instances. It caches all the information from the Discovery service. Data are updated with thread asynchronously. It periodically fetches new registries. They are updated either as delta, or full.
 
-The full update fetch is the initial one as it is necessary to download all required information. After that, it is rarely used due to performance. 
+<font color = "red"> CHECK THIS FOR ACCURACY:
+
+The Gateway contains a discovery client that supports queries about services and instances. the discovery client caches all the information from the Discovery service. Data are updated with a thread asynchronously, which periodically fetches new registries. These registries are updated either as delta, or full. </font>
+
+the initial fetch is a full update fetch is as it is necessary to download all required information. After that, it is rarely used due to performance. 
 The Gateway can call the full update, but it happens only if data are not correct to fix them. One possible reason could be a long delay between fetching.
 
-Delta fetching loads just part of registry - the last updates. Delta is not related to specific Gateway, it doesn't return differences since the last call. The Discovery service collects updates in the registry (client registration and cancellation) and stores them into a queue. This queue is sent to Gateways. They detect what is new and update its own registry (one gateway can get the same information many times). The queue on the Discovery service contains information about changes for a while (the default is 180s). The queue is periodically cleaned by a different thread (another asynchronous task). This removes all information about changes older then configuration. For easy detection of new updates by Gateway, there is a mechanism to store version to each update (incrementing number).
+Delta fetching loads just the last updates of the registry. Delta is not related to a specific Gateway and does not return differences since the last call. The Discovery service collects updates in the registry (client registration and cancellation) and stores them in a queue. This queue is sent to the Gateways. The Gateways detect what is new and update their own registry (one gateway can get the same information many times). The queue on the Discovery service contains information about changes for a while <font color = "red"> Can you be more specific than , "for a while"? </font> (the default is 180s <font color = "red"> what is being measured? 180 what? </font>). The queue is periodically cleaned by a different thread (another asynchronous task). This removes all information about changes older than the current configuration. For easy detection of new updates by the Gateway, there is a mechanism to store a version to each update (incrementing number). 
 
 **solution**
 
 This cache was minimized by allowing running asynchronous fetching at any time. The following classes are used:
 
+
+<font color = "red"> Review the following for accuracy. </font>
 - **ApimlDiscoveryClient**
-    - custom implementation of discovery client
-    - by reflection, it takes a reference to thread pool responsible for fetching of registry
-    - contains method ```public void fetchRegistry()```, which adds the new asynchronous command to fetch registry
+    - This class customizes the implementation of discovery client
+    - by reflection, <font color = "red"> WHAT DOES "BY REFLECTION MEAN? </font> it takes a reference to thread pool <font color = "red"> WHAT DOES "REFERENCE TO THREAD POOL" MEAN? </font> responsible for fetching the registry
+    - contains the method ```public void fetchRegistry()```, which adds the new asynchronous command to fetch the registry
  - **DiscoveryClientConfig**
-    - configuration bean to construct custom discovery client
-    - `DiscoveryClient` also support event, especially `CacheRefreshedEvent` after fetching
+    - This class is a configuration bean to construct a custom discovery client
+    - `DiscoveryClient` also support event, <font color = "red">SUPPORTS WHAT EVENT? </font> especially `CacheRefreshedEvent` after fetching
         - it is used to notify another bean to evict caches (route locators, ZUUL handle mapping, `CacheNotifier`)
  - **ServiceCacheController**
     - The controller to accept information about service changes (ie. new instance, removed instance)
@@ -86,124 +96,130 @@ This cache was minimized by allowing running asynchronous fetching at any time. 
     
 ###  Route locators in Gateway
 
-The gateway includes the bean `ApimlRouteLocator`. This bean is responsible for collecting the client's routes. It indicates that information is available about the path and services. This information is required to map the URI to a service. The most important is the filter `PreDecorationFilter`. It calls the method ```Route getMatchingRoute(String path)``` on the locator to translate the URI into
-information about the service. A filter then stores information about (ie. `serviceId`) into the ZUUL context. 
+The gateway includes the bean `ApimlRouteLocator`. This bean is responsible for collecting the client's routes. It indicates that information is available about the path and services. This information is required to map the URI to a service. The most important<font color = "red"> The most important what?</font> is the filter `PreDecorationFilter`. It calls the method ```Route getMatchingRoute(String path)``` on the locator to translate the URI into
+information about the service. A filter then stores information about <font color = "red"> Information about what</font>(ie. `serviceId`) into the ZUUL context. 
 
-In our implementation we use a custom locator, which adds information about static routing. There is possible to have multiple locators. All of them 
+In our implementation we use a custom locator, which adds information about static routing. It is possible to have multiple locators. All locators
 could be collected by `CompositeRouteLocator`. Now `CompositeRouteLocator` contains `ApimlRouteLocator` and a default implementation. Implementation of static routing
-could also be performed by a different locator (it is not necessary to override locator based on `DiscoveryClient`). In a similar way a super class of 
+could also be performed by a different locator (it is not necessary to override a locator based on `DiscoveryClient`). In a similar way a super class of 
 `ApimlRouteLocator` uses `ZuulProperties`. This can be also be used to store a static route. 
 
-**Note:** To replace `ApimlRouteLocator` with multiple locators is only for information, and it could be changed in the future.
+**Note:** Replacing `ApimlRouteLocator` with multiple locators is only for information. This could be changed in the future.
 
 **solution**
 
-Anyway this bean should be evicted. It is realized via event from fetching registry (implemented in DiscoveryClientConfig) and
-call on each locator method refresh(). This method call discoveryClient and then construct location mapping again. Now after 
-fetching new version of registry is constructed well, with new services.
+Evicted this bean. It is realized via the event <font color = "red"> Can you describe this event? What is this event?</font> from fetching registry (implemented in `DiscoveryClientConfig`) and
+call on each locator method refresh(). This method call `discoveryClient` and then construct location mapping again. After 
+fetching, a new version of the registry is constructed with new services.
 
 ### Gateway & ZuulHandlerMapping
 
-This bean serve method to detect endpoint and return right handler. Handlers are created on the begin and then just looked up
-by URI. In there is mechanism of dirty data. It means, that it create handlers and they are available (don't use locators) 
-until they are mark as dirty. Then next call refresh all handlers by data from locators.
+<font color = "red"> This paragraph should be re-written for clarity. Check for accuracy. </font>
+
+This bean serve method <font color = "red"> What is a "bean serve method" </font> detects endpoints and returns the right handler. Handlers are created at the start and then looked up
+by the URI. In there <font color = "red"> In where?</font> is a mechanism of dirty data whereby handlers are created and are available (don't use locators) <font color = "red"> what does "don't use locators mean? Is this an instruction? </font> 
+until they are marked as dirty. The next call refreshes all handlers by data from the locators.
 
 **solution**
 
-In DiscoveryClientConfig is implemented listener of fetched registry. It will mark ZuulHandlerMapping as dirty.
+ A listener of the fetched registry is implemented by  `DiscoveryClientConfig` which marks `ZuulHandlerMapping` as dirty. <font color = "red"> Explain "dirty" </font>
 
 ### Ribbon load balancer
 
-On the end of ZUUL is load balancer. For that we use Ribbon (before speed up implementation it was `ZoneAwareLoadBalancer`).
-Ribbon has also own cache. It is used to have information about instances. Shortly, ZUUL give to Ribbon request and it should 
-send to an instance. ZUUL contains information about servers (serviceId -> 1-N instances) and information about state of load
-balancing (depends on selected mechanism - a way to select next instance). If this cache is not evicted, Ribbon can try send
-request to server which was removed, don't know any server to send or just overload an instance, because don't know about other.
-Ribbon can throw many exception in this time, and it is not sure, that it retry sending in right way.
+On the end of ZUUL is a load balancer. <font color = "red"> End of what?</font> For that <font color = "red">What is "that" in this context? </font> we use Ribbon (before speed up implementation it was `ZoneAwareLoadBalancer`).
+Ribbon has also it's own cache. It is used to have information about instances. In brief, ZUUL gives Ribbon  a request and it should 
+send <font color = "red"> Send what? </font> to an instance. ZUUL contains information about servers (`serviceId -> 1-N` instances) and information about the state of load
+balancing. (depends on selected mechanism <font color = "red"> what depends onthe selected mechanism? </font> - a way to select the next instance). If this cache is not evicted, Ribbon can try to send a
+request to the server which was removed, don't know any server to send or just overload an instance, because don't know about other. <font color = "red"> This is a long, run-on sentence that doesn't make sense. Please re-write. </font>
+The Ribbon can throw many exceptions at this time, and it is not sure, that it retry sending in right way. <font color = "red"> The ribbon is not sure? Please explain. </font>
 
 **solution**
 
-Now we use as load balancer implementation `ApimlZoneAwareLoadBalancer` (it extends original `ZoneAwareLoadBalancer`). This
-implementation only add method ```public void serverChanged()``` which call super class to reload information about servers,
-it means about instances and their addresses.
+Use `ApimlZoneAwareLoadBalancer`  to implement a load balancer. (This <font color = "red"> This what? </font> extends the original `ZoneAwareLoadBalancer`). This
+implementation only adds the method ```public void serverChanged()``` which calls the super class to reload information about servers, specificlly the instances and their addresses.
 
-Method serverChanged is called from `ServiceCacheEvictor` to be sure, that before custom EhCaches are evicted and load balancer get right 
-information from ZUUL.
+The method `serverChanged` is called from `ServiceCacheEvictor` to be sure, that before custom `EhCaches` are evicted and the load balancer gets the right 
+information from ZUUL. <font color = "red"> This sentence makes no sense structurally. Please re-write. </font>
 
 ### Service cache - our custom EhCache
 
-For own purpose was added EhCache, which can collect many information about processes. It is highly recommended to synchronize
-state of EhCache with discovery client. If not, it is possible to use old values (ie. before registering new service's 
-instance with different data than old one). It can make many problems in logic (based on race condition).
+For own purpose <font color = "red"> for what's own purpose? </font> was added `EhCache`, which can collect information about processes. It is highly recommended to synchronize
+the state of `EhCache` with the discovery client. If the state is not synchronized, it is possible to use old values (ie. before registering the new service's 
+instance with different data than the old one). Non-synchronized states can cause many problems in logic (based on the race condition).
 
-It was reason to add `CacheServiceController`. This controller is called from discovery service (exactly from
-`EurekaInstanceRegisteredListener` by event `EurekaInstanceRegisteredEvent`). For cleaning caches gateway uses interface
-`ServiceCacheEvict`. It means each bean can be called about any changes in registry and evict EhCache (or different cache).
 
-Controller evict all custom caches via interface `ServiceCacheEvict` and as `ApimlDiscoveryClient` to fetch new registry. After
-than other beans are notified (see `CacheRefreshedEvent` from discovery client).
+<font color = "red"> Check this paragraph for accuracy. </font>
 
-This mechanism is working, but not strictly right. There is one case:
+`CacheServiceController` was added to address this synchronization problem. <font color = "red"> check for accuracy. </font> This controller is called from the discovery service, specifically from
+`EurekaInstanceRegisteredListener` by the event `EurekaInstanceRegisteredEvent`. For cleaning caches, the gateway uses the interface
+`ServiceCacheEvict`. As such, each bean can be called as the result of any changes in the registry and evict `EhCache` (or a different cache). 
 
-1. instance changed in discovery client
-2. gateway are notified, clean custom caches and ask for new registry fetching
-3. ZUUL accepts new request and make a cache (again with old state) - **this is wrong**
-4. fetching of registry is done, evict all Eureka caches
+The Controller evicts all custom caches via the interface `ServiceCacheEvict` and as `ApimlDiscoveryClient` to fetch a new registry. <font color = "red"> This sentence does not make sense structurally. </font>After
+this, other beans are notified (see `CacheRefreshedEvent` from the discovery client).
 
-For this reason there was added new bean `CacheEvictor`.
+<font color = "red"> CHeck this paragraph for accuracy. I am unclear if these are conditions that cause a failure, or steps which should be followed. </font>
+
+While this mechanism works, it is not working properly due to one of the following conditions:
+
+- The instance changed in the discovery client
+- The gateway is notified, clean custom caches and ask for new registry fetching
+- ZUUL accepts a new request and makes a cache (again with the old state) - **this is wrong**
+- fetching of registry is done, evict all Eureka caches
+
+Anew bean `CacheEvictor` was added to address this failure. 
  
 #### CacheEvictor
 
-This bean collects all calls from `CacheServiceController` and it is waiting for registry fetching. On this event it will clean all
-custom caches (via interface `ServiceCacheEvict`). On the end it means that custom caches are evicted twice (before Eureka parts
-and after). It fully supported right state.
+This bean collects all calls from `CacheServiceController` and it is waiting for registry fetching. In this event, it will clean all
+custom caches (via interface `ServiceCacheEvict`). In the end, custom caches are evicted twice (before Eureka parts <font color = "red"> Eureka parts? </font>
+and after). It fully supported right state. <font color = "red"> What does "It fully supported right state" mean? </font>
+
 
 ## Other improvements
 
-Implementation of this improvement wasn't just about caches, but discovery service contains one bug with notification. 
+Implementation of this improvement <font color = "red"> What improvement? </font> wasn't just about caches, but discovery service contains one bug with notification. <font color = "red"> This sentence makes no sense structurally. </font>
 
 ### Event from InstanceRegistry
 
-In Discovery service bean `InstanceRegistry` exists. This bean is called for register, renew and unregister of service (client). 
-Unfortunately, this bean contains also one problem. It notified about newly registered instances before it register it, in
-similar way about unregister (cancellation) and renew. It doesn't matter about renew (it is not a change), but other makes problem for us. We
-can clean caches before update in `InstanceRegistry` happened. On this topic exists issue:
+In Discovery service bean `InstanceRegistry` exists <font color = "red"> Exists what? </font>. This bean is called to register, renew, and unregister of service (client). 
+Unfortunately, this bean also contains a problem. It notifies about newly registered instances before it registers them, in a
+similar way as unregistering (cancellation) and renewing. It does not matter with regard to renewing  as this does not represent a change, but other makes problem for us. <font color = "red"> What is "other" in this sentence and what problem does it introduce </font>  We
+can clean caches before update in `InstanceRegistry` happened. An issue has been created to address this topic:
 
 ```
 #2659 Race condition with registration events in Eureka server
 https://github.com/spring-cloud/spring-cloud-netflix/issues/2659
 ```
 
-This issue takes long time and it is not good wait for implementation, for this reason was implemented `ApimlInstanceRegistry`.
-This bean replace implementation and make notification in right order. It is via java reflection and it will be removed when
+This issue takes a long time and it is not good wait for implementation, for this reason was implemented `ApimlInstanceRegistry`.
+This bean replaces implementation and makes notification in the right order. It is via java reflection and it will be removed when
 Eureka will be fixed. 
 
 ## Using caches and their evicting 
 
-If you use anywhere custom cache, implement interface ServiceCacheEvict to evict. It offers two methods:
+If you use anywhere a custom cache, implement  the interface `ServiceCacheEvict` to evict. It offers two methods:
 - `public void evictCacheService(String serviceId)`
-    - to evict only part of caches related to one service (multiple instances with same serviceId)
-    - if there is no way how to do it, you can evict all records
+    - to evict only part of caches related to one service (multiple instances with same `serviceId`)
+    - if there is no way how to evict only parts, you can evict all records
 - `public void evictCacheAllService()`
     - to evict all records in the caches, which can have a relationship with any service
-    - this method will be call very rare, only in case that there is impossible to get serviceId (ie. wrong format of instanceId)
+    - this method is only in very rare cases, only apply if it is impossible to get a `serviceId` (ie. wrong format of `instanceId`)
 
 ## Order to clean caches
 
-From Instance registry is information distributed in this order:
+From the Instance registry information is distributed in this order:
 
 ```
 Discovery service > ResponseCache in discovery service > Discovery client in gateway > Route locators in gateway > ZUUL handler mapping
 ```
 
-After this chain is our EhCache (because this is first time, which could cache new data)
+`EhCache` occurs after this chain as this point is the first time that new data can be cached. 
 
-From user point of view after ZUUL handler mapping exists Ribbon load balancer cache
+From the user point of view, the Ribbon load balancer cache occurs after the ZUUL handler mapping. <font color = "red"> Why does this make sense from the users point of view? </font>
 
 ---
 
 **REST API**
 
-```
-There is possible to use REST API, described at https://github.com/Netflix/eureka/wiki/Eureka-REST-operations.
-``` 
+It is possible to use a REST API, described at https://github.com/Netflix/eureka/wiki/Eureka-REST-operations.
+
