@@ -9,11 +9,6 @@
  */
 package org.zowe.apiml.gateway.routing;
 
-import org.zowe.apiml.eurekaservice.client.util.EurekaMetadataParser;
-import org.zowe.apiml.product.routing.RoutedServices;
-import org.zowe.apiml.product.routing.RoutedServicesUser;
-import org.zowe.apiml.message.log.ApimlLogger;
-import org.zowe.apiml.product.logging.annotations.InjectApimlLogger;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
@@ -21,6 +16,11 @@ import org.springframework.cloud.netflix.zuul.filters.discovery.DiscoveryClientR
 import org.springframework.cloud.netflix.zuul.filters.discovery.ServiceRouteMapper;
 import org.springframework.util.PatternMatchUtils;
 import org.springframework.util.StringUtils;
+import org.zowe.apiml.eurekaservice.client.util.EurekaMetadataParser;
+import org.zowe.apiml.message.log.ApimlLogger;
+import org.zowe.apiml.product.logging.annotations.InjectApimlLogger;
+import org.zowe.apiml.product.routing.RoutedServices;
+import org.zowe.apiml.product.routing.RoutedServicesUser;
 
 import java.util.*;
 
@@ -53,62 +53,87 @@ class ApimlRouteLocator extends DiscoveryClientRouteLocator {
     @SuppressWarnings({"squid:MethodCyclomaticComplexity", "squid:S1075", "squid:S3776"})
     protected LinkedHashMap<String, ZuulProperties.ZuulRoute> locateRoutes() {
         LinkedHashMap<String, ZuulProperties.ZuulRoute> routesMap = new LinkedHashMap<>(super.locateRoutes());
+
+
         if (this.discovery != null) {
-            Map<String, ZuulProperties.ZuulRoute> staticServices = new LinkedHashMap<>();
-            for (ZuulProperties.ZuulRoute route : routesMap.values()) {
-                String serviceId = route.getServiceId();
-                if (serviceId == null) {
-                    serviceId = route.getId();
-                }
-                if (serviceId != null) {
-                    staticServices.put(serviceId, route);
-                }
-            }
+
+            Map<String, ZuulProperties.ZuulRoute> staticServiceRoutes = extractStaticRoutes(routesMap);
 
             // Add routes for discovered services and itself by default
-            List<String> services = this.discovery.getServices();
+            List<String> servicesFromDiscovery = this.discovery.getServices();
 
-            String[] ignored = this.properties.getIgnoredServices()
+            String[] ignoredServiceIds = this.properties.getIgnoredServices()
                 .toArray(new String[0]);
+
             Set<String> removedRoutes = new HashSet<>();
-            for (String serviceId : services) {
-                // Ignore specifically ignored services and those that were manually
-                // configured
+
+            for (String serviceId : servicesFromDiscovery) {
+
+                //TODO why return null if just one serviceInstances is null? There can be multiple sets of serviceInstances..
                 List<ServiceInstance> serviceInstances = this.discovery.getInstances(serviceId);
                 if (serviceInstances == null || serviceInstances.isEmpty()) {
                     apimlLog.log("org.zowe.apiml.gateway.instanceNotFound", serviceId);
                     return null;
                 }
 
-                RoutedServices routedServices = new RoutedServices();
-                List<String> keys = createRouteKeys(serviceInstances, routedServices, serviceId);
-                if (keys.isEmpty()) {
-                    keys.add("/" + mapRouteToService(serviceId) + "/**");
+                //TODO this is registry of service and its routes? It is populated by createRouteKeys
+                RoutedServices serviceRouteTable = new RoutedServices();
+
+                List<String> serviceRouteKeys = createRouteKeys(serviceInstances, serviceRouteTable, serviceId);
+                //TODO default route key?
+                if (serviceRouteKeys.isEmpty()) {
+                    serviceRouteKeys.add("/" + mapRouteToService(serviceId) + "/**");
                 }
 
+                //TODO fill route table to all it's users, isn't it early?
                 for (RoutedServicesUser routedServicesUser : routedServicesUsers) {
-                    routedServicesUser.addRoutedServices(serviceId, routedServices);
+                    routedServicesUser.addRoutedServices(serviceId, serviceRouteTable);
                 }
 
-                if (staticServices.containsKey(serviceId)
-                    && staticServices.get(serviceId).getUrl() == null) {
+                //TODO filters static services without URL
+                if (staticServiceRoutes.containsKey(serviceId)
+                    && staticServiceRoutes.get(serviceId).getUrl() == null) {
                     // Explicitly configured with no URL, they are the default routes from the parent
                     // We need to remove them
-                    ZuulProperties.ZuulRoute staticRoute = staticServices.get(serviceId);
+                    ZuulProperties.ZuulRoute staticRoute = staticServiceRoutes.get(serviceId);
                     routesMap.remove(staticRoute.getPath());
                     removedRoutes.add(staticRoute.getPath());
                 }
 
-                for (String key : keys) {
-                    if (!PatternMatchUtils.simpleMatch(ignored, serviceId)
-                        && !routesMap.containsKey(key) && !removedRoutes.contains(key)) {
+                //TODO final evict of route keys
+                for (String serviceRouteKey : serviceRouteKeys) {
+                    if (!PatternMatchUtils.simpleMatch(ignoredServiceIds, serviceId) //service not ignored
+                        && !routesMap.containsKey(serviceRouteKey) //route not in super.locateRoutes()
+                        && !removedRoutes.contains(serviceRouteKey)) { //route not in removed routes
+
                         // Not ignored
-                        routesMap.put(key, new ZuulProperties.ZuulRoute(key, serviceId));
+                        routesMap.put(serviceRouteKey, new ZuulProperties.ZuulRoute(serviceRouteKey, serviceId));
                     }
                 }
             }
         }
 
+        LinkedHashMap<String, ZuulProperties.ZuulRoute> values = applyZuulPrefix(routesMap);
+
+        return values;
+    }
+
+    private Map<String, ZuulProperties.ZuulRoute> extractStaticRoutes(LinkedHashMap<String, ZuulProperties.ZuulRoute> routesMap) {
+        Map<String, ZuulProperties.ZuulRoute> staticServices = new LinkedHashMap<>();
+        for (ZuulProperties.ZuulRoute route : routesMap.values()) {
+            String serviceId = route.getServiceId();
+            if (serviceId == null) {
+                serviceId = route.getId();
+            }
+            if (serviceId != null) {
+                staticServices.put(serviceId, route);
+            }
+        }
+        return staticServices;
+    }
+
+
+    private LinkedHashMap<String, ZuulProperties.ZuulRoute> applyZuulPrefix(LinkedHashMap<String, ZuulProperties.ZuulRoute> routesMap) {
         LinkedHashMap<String, ZuulProperties.ZuulRoute> values = new LinkedHashMap<>();
         for (Map.Entry<String, ZuulProperties.ZuulRoute> entry : routesMap.entrySet()) {
             String path = entry.getKey();
@@ -124,24 +149,25 @@ class ApimlRouteLocator extends DiscoveryClientRouteLocator {
             }
             values.put(path, entry.getValue());
         }
-
         return values;
     }
 
+
+    //TODO this fills the routes parameter, not great
     /**
      * Parse route keys from the metadata and populate service routes
      *
-     * @param serviceInstance the list of service instances
+     * @param serviceInstances the list of service instances
      * @param routes          the service routes
      * @param serviceId       the service id
      * @return the list of route keys
      */
     @SuppressWarnings("squid:S3776") // Suppress complexity warning
-    private List<String> createRouteKeys(List<ServiceInstance> serviceInstance,
+    private List<String> createRouteKeys(List<ServiceInstance> serviceInstances,
                                          RoutedServices routes,
                                          String serviceId) {
         List<String> keys = new ArrayList<>();
-        serviceInstance.stream()
+        serviceInstances.stream()
             .map(ServiceInstance::getMetadata)
             .flatMap(
                 metadata -> eurekaMetadataParser.parseToListRoute(metadata).stream()
