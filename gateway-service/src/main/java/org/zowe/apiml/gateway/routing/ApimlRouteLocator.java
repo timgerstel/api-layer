@@ -52,12 +52,14 @@ class ApimlRouteLocator extends DiscoveryClientRouteLocator {
     @Override
     @SuppressWarnings({"squid:MethodCyclomaticComplexity", "squid:S1075", "squid:S3776"})
     protected LinkedHashMap<String, ZuulProperties.ZuulRoute> locateRoutes() {
-        LinkedHashMap<String, ZuulProperties.ZuulRoute> routesMap = new LinkedHashMap<>(super.locateRoutes());
 
+        LinkedHashMap<String, ZuulProperties.ZuulRoute> discoveryClientRouteLocatorRoutes = new LinkedHashMap<>(super.locateRoutes());
+
+        LinkedHashMap<String, ZuulProperties.ZuulRoute> discoveredRoutes = new LinkedHashMap<>(discoveryClientRouteLocatorRoutes);
 
         if (this.discovery != null) {
 
-            Map<String, ZuulProperties.ZuulRoute> staticServiceRoutes = extractStaticRoutes(routesMap);
+            Map<String, ZuulProperties.ZuulRoute> staticServiceRoutes = extractStaticRoutes(discoveredRoutes);
 
             // Add routes for discovered services and itself by default
             List<String> servicesFromDiscovery = this.discovery.getServices();
@@ -72,13 +74,11 @@ class ApimlRouteLocator extends DiscoveryClientRouteLocator {
                 //TODO why return null if just one serviceInstances is null? There can be multiple sets of serviceInstances..
                 List<ServiceInstance> serviceInstances = this.discovery.getInstances(serviceId);
                 if (serviceInstances == null || serviceInstances.isEmpty()) {
-                    apimlLog.log("org.zowe.apiml.gateway.instanceNotFound", serviceId);
-                    return null;
+                    continue;
                 }
 
                 //TODO this is registry of service and its routes? It is populated by createRouteKeys
                 RoutedServices serviceRouteTable = new RoutedServices();
-
                 List<String> serviceRouteKeys = createRouteKeys(serviceInstances, serviceRouteTable, serviceId);
                 //TODO default route key?
                 if (serviceRouteKeys.isEmpty()) {
@@ -91,31 +91,38 @@ class ApimlRouteLocator extends DiscoveryClientRouteLocator {
                 }
 
                 //TODO filters static services without URL
-                if (staticServiceRoutes.containsKey(serviceId)
-                    && staticServiceRoutes.get(serviceId).getUrl() == null) {
-                    // Explicitly configured with no URL, they are the default routes from the parent
-                    // We need to remove them
-                    ZuulProperties.ZuulRoute staticRoute = staticServiceRoutes.get(serviceId);
-                    routesMap.remove(staticRoute.getPath());
-                    removedRoutes.add(staticRoute.getPath());
-                }
+                removedRoutes = filterStaticRoutes(serviceId, staticServiceRoutes);
+                removedRoutes.forEach(route -> discoveredRoutes.remove(route));
 
-                //TODO final evict of route keys
+                //TODO adds new routes that are not present in the discoveryClientRouteLocatorRoutes
                 for (String serviceRouteKey : serviceRouteKeys) {
                     if (!PatternMatchUtils.simpleMatch(ignoredServiceIds, serviceId) //service not ignored
-                        && !routesMap.containsKey(serviceRouteKey) //route not in super.locateRoutes()
+                        && !discoveredRoutes.containsKey(serviceRouteKey) //route not in super.locateRoutes()
                         && !removedRoutes.contains(serviceRouteKey)) { //route not in removed routes
 
                         // Not ignored
-                        routesMap.put(serviceRouteKey, new ZuulProperties.ZuulRoute(serviceRouteKey, serviceId));
+                        discoveredRoutes.put(serviceRouteKey, new ZuulProperties.ZuulRoute(serviceRouteKey, serviceId));
                     }
                 }
             }
         }
 
-        LinkedHashMap<String, ZuulProperties.ZuulRoute> values = applyZuulPrefix(routesMap);
+        LinkedHashMap<String, ZuulProperties.ZuulRoute> values = applyZuulPrefix(discoveredRoutes);
 
         return values;
+    }
+
+    private Set<String> filterStaticRoutes(String serviceId, Map<String, ZuulProperties.ZuulRoute> staticServiceRoutes) {
+        Set<String> removedRoutes = new HashSet<>();
+        if (staticServiceRoutes.containsKey(serviceId)
+            && staticServiceRoutes.get(serviceId).getUrl() == null) {
+            // Explicitly configured with no URL, they are the default routes from the parent
+            // We need to remove them
+            ZuulProperties.ZuulRoute staticRoute = staticServiceRoutes.get(serviceId);
+
+            removedRoutes.add(staticRoute.getPath());
+        }
+        return removedRoutes;
     }
 
     private Map<String, ZuulProperties.ZuulRoute> extractStaticRoutes(LinkedHashMap<String, ZuulProperties.ZuulRoute> routesMap) {
