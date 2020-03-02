@@ -54,17 +54,27 @@ public class ApimlRouteLocatorTest {
 
         DiscoveryMock dmock = new DiscoveryMock();
         dmock.addServiceInstance("service");
-        dmock.addRouteToInstance("service0:localhost:80", "api/v1", "/");
+        dmock.addRouteToInstance("service0:localhost:80", "api-v1", "api/v1", "/");
         dmock.build();
 
         LinkedHashMap<String, ZuulProperties.ZuulRoute> locatedRoutes = apimlRouteLocator.locateRoutes();
 
-        ZuulProperties.ZuulRoute expectZuulRoute = new ZuulProperties.ZuulRoute();
-        expectZuulRoute.setId("api/v1/service");
-        expectZuulRoute.setPath("/api/v1/service/**");
-        expectZuulRoute.setServiceId("service");
+        assertThat(locatedRoutes, hasEntry("/api/v1/service/**", createZuulRoute("api/v1/service", "/api/v1/service/**", "service")));
+    }
 
-        assertThat(locatedRoutes, hasEntry("/api/v1/service/**",expectZuulRoute));
+    @Test
+    public void givenSingleServiceWithTwoRoutes_whenEverythingValid_thenFindsTwoExpectedRoutesEntries() {
+
+        DiscoveryMock dmock = new DiscoveryMock();
+        dmock.addServiceInstance("service");
+        dmock.addRouteToInstance("service0:localhost:80", "api-v1", "api/v1", "/");
+        dmock.addRouteToInstance("service0:localhost:80", "ws-v1", "ws/v1", "/ws");
+        dmock.build();
+
+        LinkedHashMap<String, ZuulProperties.ZuulRoute> locatedRoutes = apimlRouteLocator.locateRoutes();
+
+        assertThat(locatedRoutes, hasEntry("/api/v1/service/**", createZuulRoute("api/v1/service", "/api/v1/service/**", "service")));
+        assertThat(locatedRoutes, hasEntry("/ws/v1/service/**", createZuulRoute("ws/v1/service", "/ws/v1/service/**", "service")));
     }
 
     /**
@@ -85,7 +95,7 @@ public class ApimlRouteLocatorTest {
             return instance;
         }
 
-        public ServiceInstance addRouteToInstance(String instanceId, String gatewayUrl, String serviceUrl) {
+        public ServiceInstance addRouteToInstance(String instanceId, String apiKey, String gatewayUrl, String serviceUrl) {
             ServiceInstance instance = serviceRegistry.stream()
                 .filter(i -> i.getInstanceId().equals(instanceId))
                 .findFirst()
@@ -93,8 +103,8 @@ public class ApimlRouteLocatorTest {
 
             Map<String, String> metadata = new HashMap<>();
             metadata.putAll(instance.getMetadata());
-            metadata.put(ROUTES + ".api-v1." + ROUTES_GATEWAY_URL, gatewayUrl);
-            metadata.put(ROUTES + ".api-v1." + ROUTES_SERVICE_URL, serviceUrl);
+            metadata.put(ROUTES + "."+apiKey+"." + ROUTES_GATEWAY_URL, gatewayUrl);
+            metadata.put(ROUTES + "."+apiKey+"." + ROUTES_SERVICE_URL, serviceUrl);
 
             ServiceInstance newInstance = new DefaultServiceInstance(instance.getInstanceId(), instance.getServiceId(), instance.getHost(), instance.getPort(), instance.isSecure(), metadata);
             serviceRegistry.remove(instance);
@@ -113,6 +123,14 @@ public class ApimlRouteLocatorTest {
                     .collect(Collectors.toList())
             );
         }
+    }
+
+    ZuulProperties.ZuulRoute createZuulRoute(String id, String path, String serviceId) {
+        ZuulProperties.ZuulRoute route = new ZuulProperties.ZuulRoute();
+        route.setId(id);
+        route.setPath(path);
+        route.setServiceId(serviceId);
+        return route;
     }
 
     @Test
@@ -145,14 +163,17 @@ public class ApimlRouteLocatorTest {
     public void givenMockDiscovery_whenRouteAddedToService_thenInstanceReceivesCorrectMetadata() {
         DiscoveryMock dmock = new DiscoveryMock();
         dmock.addServiceInstance("myService");
-        dmock.addRouteToInstance("myService0:localhost:80", "ws/v1", "/servicepath");
+        dmock.addRouteToInstance("myService0:localhost:80", "ws-v1", "ws/v1", "/servicepath");
+        dmock.addRouteToInstance("myService0:localhost:80", "api-v1","api/v1", "/api");
         dmock.build();
 
         assertThat(discovery.getServices(), contains("myService"));
         assertThat(discovery.getInstances("myService"), hasSize(1));
         ServiceInstance instance = discovery.getInstances("myService").get(0);
-        assertThat(instance.getMetadata(), hasEntry(ROUTES + ".api-v1." + ROUTES_GATEWAY_URL, "ws/v1"));
-        assertThat(instance.getMetadata(), hasEntry(ROUTES + ".api-v1." + ROUTES_SERVICE_URL, "/servicepath"));
+        assertThat(instance.getMetadata(), hasEntry(ROUTES + ".ws-v1." + ROUTES_GATEWAY_URL, "ws/v1"));
+        assertThat(instance.getMetadata(), hasEntry(ROUTES + ".ws-v1." + ROUTES_SERVICE_URL, "/servicepath"));
+        assertThat(instance.getMetadata(), hasEntry(ROUTES + ".api-v1." + ROUTES_GATEWAY_URL, "api/v1"));
+        assertThat(instance.getMetadata(), hasEntry(ROUTES + ".api-v1." + ROUTES_SERVICE_URL, "/api"));
     }
 
 
