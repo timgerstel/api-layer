@@ -52,15 +52,14 @@ class NewApimlRouteLocatorTest {
     }
 
     @Test
-    void givenPopulatedDiscovery_whenLocate_thenResolvedCorrectly() {
+    void givenService_whenDoesNotHaveRouteMetadata_thenCreateNoRoute() {
         NewApimlRouteLocatorTest.DiscoveryMock dmock = new NewApimlRouteLocatorTest.DiscoveryMock();
         dmock.addServiceInstance("service");
-        //dmock.addRouteToInstance("service0:localhost:80", "api-v1", "api/v1", "/");
         dmock.build();
 
         LinkedHashMap<String, ZuulProperties.ZuulRoute> locatedRoutes = newApimlRouteLocator.locateRoutes();
 
-        assertThat(locatedRoutes, hasEntry("/service/**", createZuulRoute("service", "/service/**", "service")));
+        assertThat(locatedRoutes.entrySet(), hasSize(0));
     }
 
     @Test
