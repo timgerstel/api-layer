@@ -251,4 +251,54 @@ public class ApiMediationServiceConfigReaderTest {
             apiMediationServiceConfigReader.loadConfiguration(internalFileName, null);
 
     }
+
+    @Test
+    public void givenSystemProperties_whenLoadFromFile_thenNoOverrideBySystemProp() throws Exception{
+
+        System.setProperty("apiml.serviceId", "veronica");
+
+        String internalFileName = "/service-configuration.yml";
+
+        ApiMediationServiceConfigReader apiMediationServiceConfigReader = new ApiMediationServiceConfigReader();
+        ApiMediationServiceConfig result = apiMediationServiceConfigReader.loadConfiguration(internalFileName);
+
+        assertEquals("service", result.getServiceId()); // no replace without wildcard
+    }
+
+    @Test
+    public void givenSystemProperties_whenLoadFromContext_thenNotOverrideBySystemProp() throws Exception{
+
+        System.setProperty("apiml.serviceId", "veronica");
+        ServletContext context = new MockServletContext();
+
+        ApiMediationServiceConfigReader apiMediationServiceConfigReader = new ApiMediationServiceConfigReader();
+        ApiMediationServiceConfig result = apiMediationServiceConfigReader.loadConfiguration(context);
+
+        assertEquals("service", result.getServiceId()); // no replace without wildcard
+    }
+
+    @Test
+    public void givenSystemProperties_whenLoadFromFileThatHasWildcard_thenConfigOverridenBySystemProp() throws Exception{
+
+        System.setProperty("apiml.serviceId", "veronica");
+        System.setProperty("prefix.description", "samantha");
+        ServletContext context = new MockServletContext();
+
+        ApiMediationServiceConfigReader apiMediationServiceConfigReader = new ApiMediationServiceConfigReader();
+        ApiMediationServiceConfig result = apiMediationServiceConfigReader.loadConfiguration("service-configuration-wildcard.yml");
+
+        assertEquals("veronica", result.getServiceId());    // wildcard is mandatory to replace
+        assertEquals("${prefix.description}", result.getDescription());  // it allows you to specify arbitraty prefix, yet only apiml prefix is replaced
+        assertEquals("${apiml.title}", result.getTitle());  // it leaves the unreplaced prefixes
+    }
+
+    @Test
+    public void givenSystemProperties_whenOverridingTokenInSslPart_thenConfigOverridenBySystemProp() throws Exception {
+        System.setProperty("apiml.david", "veronica");
+
+        ApiMediationServiceConfigReader apiMediationServiceConfigReader = new ApiMediationServiceConfigReader();
+        ApiMediationServiceConfig result = apiMediationServiceConfigReader.loadConfiguration("service-configuration-wildcard.yml");
+
+        assertEquals("veronica", result.getSsl().getKeyStore());
+    }
 }
