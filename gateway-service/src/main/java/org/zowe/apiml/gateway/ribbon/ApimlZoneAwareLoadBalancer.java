@@ -13,6 +13,7 @@ import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.*;
 import com.netflix.niws.loadbalancer.DiscoveryEnabledServer;
 import org.zowe.apiml.gateway.cache.ServiceCacheEvictor;
+import org.zowe.apiml.gateway.ribbon.http.RequestAbortException;
 
 /**
  * Custom implementation of load balancer. This implementation register on creating into ServiceCacheEvictor. It allows
@@ -60,12 +61,20 @@ public class ApimlZoneAwareLoadBalancer<T extends Server> extends ZoneAwareLoadB
         }
 
         if (server instanceof DiscoveryEnabledServer) {
-            RequestContextUtils.setInstanceInfo(((DiscoveryEnabledServer) server).getInstanceInfo());
+            DiscoveryEnabledServer newServer = (DiscoveryEnabledServer) server;
+            if (chooseSameServerAgain(newServer)) {
+                throw new RequestAbortException("Retry on same server");
+            }
+            RequestContextUtils.setInstanceInfo(newServer.getInstanceInfo());
             RequestContextUtils.addDebugInfo("Load Balancer chooses: " + ((DiscoveryEnabledServer) server).getInstanceInfo());
         } else {
             throw new IllegalStateException("Unexpected error, please contact Broadcom support");
         }
 
         return server;
+    }
+
+    private boolean chooseSameServerAgain(DiscoveryEnabledServer newServer) {
+        return newServer.getInstanceInfo().equals(RequestContextUtils.getInstanceInfo().orElseGet(()->null));
     }
 }

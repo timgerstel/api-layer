@@ -25,6 +25,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.zowe.apiml.gateway.cache.ServiceCacheEvictor;
+import org.zowe.apiml.gateway.ribbon.http.RequestAbortException;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
@@ -99,5 +100,19 @@ class ApimlZoneAwareLoadBalancerTest {
         assertThrows(IllegalStateException.class, () -> underTest.chooseServer("instance"));
     }
 
+    @Test
+    public void givenSingleServerInstanceRegistered_whenChooseTheSameServerAgain_thenInterruptRetry() {
+        InstanceInfo info = InstanceInfo.Builder.newBuilder()
+            .setAppName("appname")
+            .setInstanceId("instance")
+            .build();
+        underTest.addServer(new DiscoveryEnabledServer(info, true));
+
+        RequestContext context = RequestContext.getCurrentContext();
+        context.put(ApimlZoneAwareLoadBalancer.LOADBALANCED_INSTANCE_INFO_KEY, info);
+        assertThat(context.get(ApimlZoneAwareLoadBalancer.LOADBALANCED_INSTANCE_INFO_KEY), is(info));
+
+        assertThrows(RequestAbortException.class, () -> underTest.chooseServer("instance"));
+    }
 
 }
